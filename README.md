@@ -74,6 +74,7 @@ from that installation before granting gateway scope. Follow these guides:
 2. [Connect your existing Cloudflare Tunnel](docs/cloudflare-connector.md)
 3. [Publish reviewed content into Notion](docs/notion-publishing.md)
 4. [Connection profile and native authority](docs/connection-profile.md)
+5. [Local preparation and live acceptance handoff](docs/acceptance-handoff.md)
 
 The Cloudflare helper's `prepare`, `inspect` and local `validate` commands do not
 start a tunnel. Only explicit `run` starts your selected connector. No command

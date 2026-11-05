@@ -10,9 +10,12 @@ import subprocess
 import sys
 import time
 import unittest
+from unittest.mock import patch
 
 GATEWAY = str(Path(sys.argv.pop(2)).resolve())
 import test_mcp as fixture
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import check_gateway
 
 
 def free_port():
@@ -274,6 +277,52 @@ class GatewayTest(unittest.TestCase):
             sock.sendall(raw.encode())
             response = sock.recv(8192)
         self.assertIn(b"401", response.split(b"\r\n")[0])
+
+    def test_readiness_check_closes_session_without_domain_command(self):
+        self.cfg["max_sessions"] = 1
+        self.start()
+        url = f"http://127.0.0.1:{self.port}/mcp"
+        result = check_gateway.probe(url, self.root / "reader.token")
+        self.assertTrue(result["authenticated"])
+        self.assertTrue(result["session_closed"])
+        self.assertFalse(result["domain_commands_executed"])
+        self.assertFalse(result["notion_agent_verified"])
+        self.assertNotIn("symphony_apply", result["tools"])
+        self.assertEqual(self.f.calls(), [])
+        for value in (self.credentials["reader"], str(self.f.profile), str(self.root)):
+            self.assertNotIn(value, json.dumps(result))
+        # Single-session capacity is available immediately, not after expiry.
+        self.assertTrue(check_gateway.probe(url, self.root / "reader.token")["session_closed"])
+
+    def test_readiness_failure_still_closes_session(self):
+        self.cfg["max_sessions"] = 1
+        self.cfg["clients"][0]["allowed_tools"] = ["symphony_discover"]
+        self.start()
+        with self.assertRaisesRegex(ValueError, "connection tool"):
+            check_gateway.probe(f"http://127.0.0.1:{self.port}/mcp", self.root / "reader.token")
+        sid = self.initialize()
+        self.assertEqual(self.send(sid=sid, method="DELETE")[0], 204)
+
+    def test_readiness_destination_and_credentials_fail_before_network(self):
+        for url in ("http://remote.example/mcp", "https://user:secret@example.org/mcp",
+                    "https://example.org/mcp?token=secret", "https://example.org/other",
+                    "https://example.org/mcp#secret"):
+            with patch.object(check_gateway, "build_opener") as opener:
+                with self.assertRaises(ValueError):
+                    check_gateway.probe(url, self.root / "reader.token")
+                opener.assert_not_called()
+        token = self.root / "reader.token"
+        token.chmod(0o644)
+        with self.assertRaisesRegex(ValueError, "0600"):
+            check_gateway.credential(token)
+        token.chmod(0o600)
+        alias = self.root / "token-link"
+        alias.symlink_to(token)
+        with self.assertRaises(OSError):
+            check_gateway.credential(alias)
+        token.write_text("x" * 129)
+        with self.assertRaises(ValueError):
+            check_gateway.credential(token)
 
 
 if __name__ == "__main__":

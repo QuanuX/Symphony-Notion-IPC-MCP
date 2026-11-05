@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 import io
+from urllib.error import HTTPError
 from urllib.parse import urlsplit, parse_qs, urlencode
 from unittest.mock import patch
 
@@ -188,6 +189,104 @@ class NotionPublishing(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "500KB"):
                 n.request("/v1/pages", {"text": "x" * 500001}, "Bearer private-token")
             self.assertEqual(factory.return_value.open.call_count, 1)
+
+
+class LiveAccessCheck(unittest.TestCase):
+    def setUp(self):
+        NotionPublishing.setUp(self)
+        self.parent = "b55c9c91-384d-452b-81db-d1ef79372b75"
+        self.c["allowed_parent_pages"] = [self.parent]
+        t = n.token(self.c)
+        t["bot_id"] = "selected-bot"
+        n.write_private(self.c["token_file"], t, replace=True)
+        self.bot = {"object": "user", "type": "bot", "id": "selected-bot", "name": "Private bot name"}
+        self.page = {"object": "page", "id": self.parent, "archived": False, "in_trash": False,
+                     "properties": {"title": "Private page title"}}
+
+    def test_verify_reads_only_selected_bot_and_page(self):
+        before = Path(self.c["token_file"]).read_bytes()
+        with patch.object(n, "request", side_effect=[self.bot, self.page]) as req:
+            result = n.verify(self.c, self.parent.replace("-", ""))
+        self.assertEqual([call.args[0] for call in req.call_args_list],
+                         ["/v1/users/me", "/v1/pages/" + self.parent])
+        for call in req.call_args_list:
+            self.assertEqual(call.kwargs, {"method": "GET"})
+            self.assertIsNone(call.args[1])
+        self.assertTrue(result["parent_readable"])
+        self.assertFalse(result["publication_verified"])
+        self.assertFalse(result["writes_performed"])
+        self.assertFalse(result["notion_agent_verified"])
+        self.assertEqual(result["workspace_evidence"], "stored_oauth_grant")
+        text = json.dumps(result)
+        for private in ("Private page title", "Private bot name", "private-access", "private-refresh"):
+            self.assertNotIn(private, text)
+        self.assertEqual(Path(self.c["token_file"]).read_bytes(), before)
+
+    def test_verify_refuses_unselected_or_injected_destinations_before_network(self):
+        for parent in ("cf22fcfa-1dd3-445a-9388-13fea7596dc3", "../users/me", self.parent + "?secret=bad",
+                       "https://api.notion.com/v1/pages/" + self.parent):
+            with self.subTest(parent=parent), patch.object(n, "request") as req:
+                with self.assertRaises(ValueError):
+                    n.verify(self.c, parent)
+                req.assert_not_called()
+
+    def test_verify_refuses_missing_or_changed_bot_before_page_access(self):
+        for bot in (dict(self.bot, id="another-bot"), dict(self.bot, type="person"), []):
+            with patch.object(n, "request", return_value=bot) as req:
+                with self.assertRaisesRegex(ValueError, "identity"):
+                    n.verify(self.c, self.parent)
+                self.assertEqual(req.call_count, 1)
+        t = n.token(self.c)
+        del t["bot_id"]
+        n.write_private(self.c["token_file"], t, replace=True)
+        with patch.object(n, "request") as req:
+            with self.assertRaisesRegex(ValueError, "bot_id"):
+                n.verify(self.c, self.parent)
+            req.assert_not_called()
+
+    def test_verify_refuses_wrong_archived_trashed_or_incomplete_pages(self):
+        for page in (dict(self.page, id="cf22fcfa-1dd3-445a-9388-13fea7596dc3"),
+                     dict(self.page, archived=True), dict(self.page, in_trash=True),
+                     {"object": "page", "id": self.parent}, []):
+            with patch.object(n, "request", side_effect=[self.bot, page]):
+                with self.assertRaises(ValueError):
+                    n.verify(self.c, self.parent)
+
+    def test_verify_never_retries_denial_or_loss(self):
+        for error in (RuntimeError("Notion HTTP 403; no automatic retry"), TimeoutError()):
+            with patch.object(n, "request", side_effect=error) as req:
+                with self.assertRaises(type(error)):
+                    n.verify(self.c, self.parent)
+                self.assertEqual(req.call_count, 1)
+
+    def test_get_transport_and_endpoint_boundaries(self):
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self, limit): return b'{"object":"user"}'
+        with patch.object(n, "build_opener") as factory:
+            factory.return_value.open.return_value = Response()
+            n.request("/v1/users/me", None, "Bearer private-token", method="GET")
+            req = factory.return_value.open.call_args.args[0]
+            self.assertEqual(req.get_method(), "GET")
+            self.assertIsNone(req.data)
+            self.assertEqual(req.get_header("Notion-version"), "2026-03-11")
+            self.assertEqual(req.full_url, "https://api.notion.com/v1/users/me")
+            for path, payload, method in (("/v1/oauth/token", None, "GET"), ("/v1/users/me", {}, "GET"),
+                                          ("/v1/pages/" + self.parent + "/../users/me", None, "GET"),
+                                          ("//evil.example", None, "GET"), ("/v1/pages", {}, "DELETE")):
+                with self.assertRaises(ValueError):
+                    n.request(path, payload, "Bearer private-token", method=method)
+            self.assertEqual(factory.return_value.open.call_count, 1)
+
+    def test_get_errors_do_not_leak_response_or_follow_redirects(self):
+        for code in (302, 401, 403, 404, 429, 503):
+            with patch.object(n, "build_opener") as factory:
+                factory.return_value.open.side_effect = HTTPError("https://api.notion.com/v1/users/me", code,
+                    "private response", {}, io.BytesIO(b"private-token"))
+                with self.assertRaisesRegex(RuntimeError, f"Notion HTTP {code}; no automatic retry"):
+                    n.request("/v1/users/me", None, "Bearer private-token", method="GET")
+                self.assertEqual(factory.return_value.open.call_count, 1)
 
 
 if __name__ == "__main__":

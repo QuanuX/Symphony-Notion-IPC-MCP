@@ -14,6 +14,7 @@ from pathlib import Path
 import secrets
 import stat
 import time
+import uuid
 from urllib.error import HTTPError
 from urllib.parse import urlencode, urlsplit, parse_qs
 from urllib.request import Request, build_opener, HTTPSHandler, HTTPRedirectHandler
@@ -78,11 +79,28 @@ class NoRedirect(HTTPRedirectHandler):
         return None  # Never send workspace credentials to another host.
 
 
-def request(path, payload, authorization):
-    require(path in ("/v1/oauth/token", "/v1/oauth/revoke", "/v1/pages"), "Unsupported Notion operation")
-    data = json.dumps(payload, ensure_ascii=False).encode()
-    require(len(data) <= 500000, "Notion payload exceeds 500KB")
-    req = Request(API + path, data=data, method="POST", headers={
+def page_id(value):
+    """Accept bare Notion UUIDs, never URLs or request-path fragments."""
+    require(isinstance(value, str) and len(value) in (32, 36), "Use a bare Notion page UUID")
+    try:
+        return str(uuid.UUID(value))
+    except (ValueError, AttributeError):
+        raise ValueError("Use a bare Notion page UUID") from None
+
+
+def request(path, payload, authorization, *, method="POST"):
+    if method == "GET":
+        allowed = path == "/v1/users/me"
+        if path.startswith("/v1/pages/"):
+            ident = path.removeprefix("/v1/pages/")
+            allowed = page_id(ident) == ident
+        require(allowed and payload is None, "Unsupported Notion read operation")
+        data = None
+    else:
+        require(method == "POST" and path in ("/v1/oauth/token", "/v1/oauth/revoke", "/v1/pages"), "Unsupported Notion operation")
+        data = json.dumps(payload, ensure_ascii=False).encode()
+        require(len(data) <= 500000, "Notion payload exceeds 500KB")
+    req = Request(API + path, data=data, method=method, headers={
         "Authorization": authorization, "Notion-Version": VERSION, "Content-Type": "application/json"})
     opener = build_opener(HTTPSHandler(), NoRedirect())
     try:
@@ -92,7 +110,36 @@ def request(path, payload, authorization):
             return json.loads(raw) if raw else {}
     except HTTPError as exc:
         # No response body, auth code, token or uploaded content in diagnostics.
-        raise RuntimeError(f"Notion HTTP {exc.code}; no automatic retry") from None
+        code = exc.code
+        exc.close()
+        raise RuntimeError(f"Notion HTTP {code}; no automatic retry") from None
+
+
+def verify(c, parent):
+    """Explicit bounded live read. No writes, token refresh or page-content output."""
+    selected = page_id(parent)
+    require(selected in {page_id(p) for p in c["allowed_parent_pages"]}, "Parent page outside configured scope")
+    t = token(c)
+    require(isinstance(t.get("bot_id"), str) and t["bot_id"],
+            "Stored OAuth response has no bot_id; reauthorize to verify identity")
+    auth = "Bearer " + t["access_token"]
+    bot = request("/v1/users/me", None, auth, method="GET")
+    require(isinstance(bot, dict) and bot.get("object") == "user" and
+            bot.get("type") == "bot" and bot.get("id") == t["bot_id"],
+            "Live bot identity differs from stored OAuth grant")
+    page = request("/v1/pages/" + selected, None, auth, method="GET")
+    require(isinstance(page, dict) and page.get("object") == "page" and
+            page_id(page.get("id")) == selected, "Notion returned a different page")
+    require(page.get("archived") is False and page.get("in_trash") is False,
+            "Selected page is archived, in trash, or missing lifecycle metadata")
+    # The pages endpoint does not independently attest workspace identity or
+    # insert capability. Never promote this read to publication acceptance.
+    return {"schema": "symphony.notion.access-check.v1", "checked_at": time.time(),
+            "api_version": VERSION, "workspace_id": c["workspace_id"],
+            "workspace_evidence": "stored_oauth_grant", "bot_identity_verified": True,
+            "parent_page": selected, "parent_readable": True,
+            "publication_verified": False, "notion_agent_verified": False,
+            "writes_performed": False}
 
 
 def config(path):
@@ -252,6 +299,9 @@ def main():
     sub = p.add_subparsers(dest="action", required=True)
     for name in ("authorize", "status", "refresh", "revoke"):
         sub.add_parser(name)
+    check = sub.add_parser("verify", help="Explicit live bot and selected-page read; never publishes")
+    check.add_argument("--parent-page", required=True)
+    check.add_argument("--output", type=Path, help="New private evidence file; never overwrites")
     preview = sub.add_parser("prepare")
     preview.add_argument("--parent-page", required=True)
     preview.add_argument("--title", required=True)
@@ -269,6 +319,10 @@ def main():
         elif args.action == "status":
             t = token(c)
             result = {"workspace_id": t["workspace_id"], "credentials_stored": True, "live_access": "not_probed", "allowed_parent_pages": c["allowed_parent_pages"]}
+        elif args.action == "verify":
+            result = verify(c, args.parent_page)
+            if args.output:
+                write_private(args.output, result)
         elif args.action == "prepare":
             with args.body_file.open("rb") as f:
                 raw = f.read(MAX_BYTES + 1)
