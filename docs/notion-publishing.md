@@ -37,6 +37,35 @@ in chat. `status` reports stored identity and destinations; it does not probe li
 Notion access. The protected token file retains access/refresh tokens and the
 workspace identity returned by Notion.
 
+## Verify live access without publishing
+
+`status` remains an offline inspection. When the operator is ready to contact
+Notion, explicitly verify one selected parent page:
+
+```sh
+python3 scripts/notion_publish.py --config /absolute/private/publisher.json verify \
+  --parent-page YOUR_ALLOWED_PAGE_UUID \
+  --output /absolute/private/notion-access-check.json
+```
+
+This makes exactly two bounded GET requests: the token's bot user and the selected
+page metadata. The bot must match the stored OAuth grant, and the page must be
+within configured scope, readable and neither archived nor in trash. Use a bare
+page UUID (with or without hyphens), not a Notion URL. The token response must
+include `bot_id`; no shared connector or other app's token is substituted.
+
+The optional output is a new private file and contains no credentials, bot name,
+page title or page contents. The check performs no publication, refresh, revoke,
+search, content traversal or automatic retry. Notion's read-content capability is
+required. A successful read does not prove insert capability, successful page
+creation, Notion Agent access, or independent workspace identity: the workspace
+binding comes from the stored OAuth response. Actual reviewed publication still
+requires the separate preview/send workflow below.
+
+API contracts: [bot identity](https://developers.notion.com/reference/get-self)
+and [page metadata](https://developers.notion.com/reference/retrieve-a-page),
+checked 2026-11-05 against the retained **2026-03-11** API baseline.
+
 ## Preview, approve and publish
 
 Prepare a report from explicit content selected for external disclosure:

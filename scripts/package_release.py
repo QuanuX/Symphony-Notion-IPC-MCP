@@ -9,7 +9,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = ('README.md', 'LICENSE', 'CMakeLists.txt', '.gitignore')
-DIRS = ('src', 'include', 'third_party', 'scripts', 'tests', 'skills', 'docs', 'adapters')
+DIRS = ('src', 'include', 'third_party', 'scripts', 'tests', 'skills', 'docs', 'adapters', '.github/workflows')
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)

@@ -123,6 +123,30 @@ results. Self-hosted computation does not mean these results stay on the machine
 
 ## Actual-host acceptance
 
+Before using Notion, the operator can explicitly check a running endpoint with
+the included standard-library client. It does not start any service or tunnel:
+
+```sh
+python3 scripts/check_gateway.py --url https://YOUR_HOST/mcp \
+  --token-file /absolute/private/notion-gateway/notion-agent.token \
+  --output /absolute/private/gateway-access-check.json
+```
+
+For a local rehearsal, use `http://127.0.0.1:8765/mcp` and explicitly allow that
+Host (including port) in the selected gateway profile. Other cleartext hosts,
+credential-bearing URLs, redirects and URL query tokens are refused. Credentials
+come only from the selected private file. The check initializes MCP, lists scoped
+tools, calls `symphony_connection`, and closes its session, including on failures
+after initialization. It performs no domain command or mutation and never retries.
+If initialization's response is lost, a session may remain until expiry; a failed
+closure is reported as failure, not a successful readiness check.
+
+The optional private evidence file omits credential values, endpoint URL and
+connection output. This is a helper-client check, **not Notion client acceptance**,
+native service-health evidence, or proof that the edge denies anonymous access.
+Run the actual Notion checks below separately. A trusted endpoint and authorized
+disclosure of connection metadata remain the operator's responsibility.
+
 Record Notion plan/client version, platform, gateway/source digest and selected
 installation. Prove: authenticated initialize; scoped tools; one bounded read;
 denied tool/command; isolated connection; one **authorized disposable** mutation;

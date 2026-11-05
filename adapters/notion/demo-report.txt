@@ -1,0 +1,10 @@
+This is a synthetic acceptance-test report for the Symphony–Notion integration.
+
+It contains no trading data, customer data, credentials, installation paths,
+research findings, or operational instructions.
+
+The purpose is to confirm that explicitly reviewed content can be published
+into the operator-selected disposable Notion page, and that the returned page
+receipt matches what is visible in Notion. It does not claim that a live test
+has already passed, that any market operation occurred, or that the integration
+has marketplace approval.

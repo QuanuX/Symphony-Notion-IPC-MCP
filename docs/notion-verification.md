@@ -82,3 +82,29 @@ then-existing CTest groups on Ubuntu 24.04 (Clang 19.1.1) and macOS 15 ARM64
 [run 41951750460](https://github.com/QuanuX/symphony-codex-ipc-mcp-and-skills/actions/runs/41951750460).
 The standalone repository adds the seventh connector group and runs its own
 workflow; its run results qualify the imported source separately.
+
+## Readiness increment — 2026-11-05
+
+A fresh Intel macOS Release build with AppleClang 21 passes all seven CTest
+groups. Gateway coverage is now 15 cases, including the new explicit helper's
+successful session cleanup, failure cleanup and destination/credential rejection.
+Publishing coverage is now 18 cases, including bounded GET requests, bot identity,
+page scope/lifecycle, redacted evidence and no automatic retry. These publishing
+responses remain fixtures, not live Notion results.
+
+The new helper also passes twice through the exact selected OpenAI bridge and
+demo qxctl identified above, using the freshly built gateway (SHA-256
+`5dc94d2458fb62bc1e334a86ea14c353f4c51709f63d86f986b64aba33f675e5`).
+Both sessions close, allowing immediate reuse of the single-session IPC bridge.
+A subsequent discovery/description/bounded native template read passes. No
+non-read operation is enabled, no tunnel is started, and temporary processes and
+profiles are removed. This demonstrates local compatibility with that selected
+installation; actual Notion client and publication acceptance remain pending.
+
+The initial cached build referenced the old MPC-spelled directory; a fresh build
+resolved that obsolete test path. The restricted test run denied local socket
+binds; the complete seven-group rerun with local-socket permission passed.
+Workflow YAML, pinned-action references and actionlint 1.7.12 validation pass.
+The new CodeQL workflow and hosted review bundles require their own completed
+GitHub runs; local checks do not assert hosted security results. Live testing is
+deferred at the operator's direction until their destinations are available.
