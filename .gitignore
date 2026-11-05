@@ -1,0 +1,13 @@
+/build*/
+/bin/
+/dist/
+/connection.json
+__pycache__/
+*.pyc
+/evidence/
+/test-results/
+/.venv/
+/private/
+*.token
+*.receipt.json
+*.refresh-pending.json
